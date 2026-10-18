@@ -1,18 +1,42 @@
+// Enhanced runtime: improved expression evaluation and interpolation
 (() => {
   function safeText(value) {
     return String(value ?? '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
-  function evaluateValue(raw) {
-    const value = (raw || '').trim();
-    if (!value) return '';
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      return value.slice(1, -1);
+  function parseValue(raw, variables) {
+    if (!raw) return '';
+    const v = raw.trim();
+    // string literal
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) return v.slice(1, -1);
+    // arithmetic / expression: try to evaluate replacing vars
+    try {
+      const replaced = v.replace(/([A-Za-z_][A-Za-z0-9_]*)/g, function (m) {
+        if (Object.prototype.hasOwnProperty.call(variables, m)) return JSON.stringify(variables[m]);
+        return m;
+      });
+      // eslint-disable-next-line no-new-func
+      const result = Function('return (' + replaced + ')')();
+      return result;
+    } catch (e) {
+      // fallback: as-is
+      return v;
     }
-    if (!Number.isNaN(Number(value))) {
-      return Number(value);
-    }
-    return value;
+  }
+
+  function interpolate(msg, variables) {
+    return msg.replace(/\$\{([^}]+)\}/g, function (_, expr) {
+      try {
+        const replaced = expr.replace(/([A-Za-z_][A-Za-z0-9_]*)/g, function (m) {
+          if (Object.prototype.hasOwnProperty.call(variables, m)) return JSON.stringify(variables[m]);
+          return m;
+        });
+        // eslint-disable-next-line no-new-func
+        return Function('return (' + replaced + ')')();
+      } catch (e) {
+        return '';
+      }
+    });
   }
 
   function ensureRoot(root) {
@@ -42,7 +66,6 @@
   }
 
   function evalCondition(condition, variables) {
-    // Replace variable names with their JSON values, then evaluate safely
     try {
       const replaced = condition.replace(/([A-Za-z_][A-Za-z0-9_]*)/g, function (m) {
         if (Object.prototype.hasOwnProperty.call(variables, m)) return JSON.stringify(variables[m]);
@@ -65,7 +88,6 @@
     const logEntries = [];
     const lines = (code || '').split(/\n/);
 
-    // Simple parser that understands: flux assignments, quantum_emit, sys.sync_with_founder, deploy_to_vercel, if(condition) { ... }
     for (let i = 0; i < lines.length; i++) {
       const rawLine = lines[i];
       const line = rawLine.trim();
@@ -74,13 +96,15 @@
       const fluxMatch = line.match(/^(?:flux|pxl_flux|let)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?);?$/);
       if (fluxMatch) {
         const [, name, valueText] = fluxMatch;
-        variables[name] = evaluateValue(valueText);
+        variables[name] = parseValue(valueText, variables);
         continue;
       }
 
-      const emitMatch = line.match(/quantum_emit\(\s*(['\"])(.*?)\1\s*\);?$/);
+      const emitMatch = line.match(/quantum_emit\(\s*(['\"])([\s\S]*?)\1\s*\);?$/);
       if (emitMatch) {
-        logEntries.push(emitMatch[2]);
+        const rawMsg = emitMatch[2];
+        const msg = interpolate(rawMsg, variables);
+        logEntries.push(msg);
         continue;
       }
 
@@ -99,7 +123,6 @@
       const ifStart = line.match(/^if\s*\((.*)\)\s*{\s*$/);
       if (ifStart) {
         const condition = ifStart[1];
-        // collect inner block
         const inner = [];
         let depth = 0;
         i++;
@@ -115,20 +138,18 @@
 
         const condResult = evalCondition(condition, variables);
         if (condResult) {
-          // execute inner lines
           inner.forEach((ln) => {
             const l = ln.trim();
-            const em = l.match(/quantum_emit\(\s*(['\"])(.*?)\1\s*\);?$/);
-            if (em) logEntries.push(em[2]);
+            const em = l.match(/quantum_emit\(\s*(['\"])([\s\S]*?)\1\s*\);?$/);
+            if (em) logEntries.push(interpolate(em[2], variables));
             const fl = l.match(/^(?:flux|pxl_flux|let)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?);?$/);
-            if (fl) variables[fl[1]] = evaluateValue(fl[2]);
+            if (fl) variables[fl[1]] = parseValue(fl[2], variables);
           });
         }
         continue;
       }
 
-      // support simple capture(...) -> name { ... } pattern by treating inner emits
-      const captureStart = line.match(/^capture\s*\(.*\)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)\s*{\s*$/);
+      const captureStart = line.match(/^capture\s*\((.*)\)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)\s*{\s*$/);
       if (captureStart) {
         const inner = [];
         let depth = 0;
@@ -142,11 +163,10 @@
           }
           inner.push(cur);
         }
-        // for now, just record inner emits as logs
         inner.forEach((ln) => {
           const l = ln.trim();
-          const em = l.match(/quantum_emit\(\s*(['\"])(.*?)\1\s*\);?$/);
-          if (em) logEntries.push(em[2]);
+          const em = l.match(/quantum_emit\(\s*(['\"])([\s\S]*?)\1\s*\);?$/);
+          if (em) logEntries.push(interpolate(em[2], variables));
         });
         continue;
       }
