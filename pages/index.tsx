@@ -94,7 +94,7 @@ export default function PXLDocumentation() {
             <section className="space-y-12">
               <h2 className="text-3xl font-bold text-white border-b border-white/10 pb-4">Getting Started</h2>
               
-              {P_DOCS.map((doc, index) => (
+              {PXL_DOCS.map((doc, index) => (
                 <div key={index} className="group">
                   <h3 className="text-xl font-bold text-green-400 mb-2 flex items-center gap-2">
                     <Zap size={18}/> {doc.title}
@@ -147,7 +147,7 @@ pxl_node main {
             <Code size={24} className="hover:text-green-500 cursor-pointer transition-all"/>
           </div>
           <p className="text-sm font-bold tracking-widest uppercase">
-            PXL PROGRAMMING LANGUAGE &copy; 2026
+            PXL PROGRAMMING LANGUAGE © 2026
           </p>
           <p className="text-gray-500 mt-2 text-xs">
             Engineered by <span className="text-white">Peter Joram</span>. Born in Mbeya, Tanzania. 🇹🇿
